@@ -28,6 +28,7 @@ cp $SCRATCH/imagenet-r.tar $SLURM_TMPDIR/
 cp $SCRATCH/imagenetv2-matched-frequency.tar.gz $SLURM_TMPDIR/
 cp $SCRATCH/objectnet-1.0.zip $SLURM_TMPDIR/
 cp $SCRATCH/sketch.zip $SLURM_TMPDIR/
+cp $SCRATCH/imagenet/imagenet/valprep.sh $SLURM_TMPDIR/
 
 
 ls $SLURM_TMPDIR >> $SCRATCH/log.txt
@@ -36,6 +37,10 @@ module load httpproxy
 python test.py
 cd $SLURM_TMPDIR
 ./extract_ILSVRC.sh
+cd imagenet/val
+chmod +x "$SLURM_TMPDIR/valprep.sh" || true
+bash $SLURM_TMPDIR/valprep.sh
+cd $SLURM_TMPDIR
 tar -xvf imagenet-a.tar
 tar -xvf imagenet-r.tar
 #tar -xvf imagenetv2-matched-frequency.tar.gz extracted by script
@@ -52,14 +57,28 @@ ls imagenet/val >> $SCRATCH/log.txt
 
 # Define paths
 DATA_DIR="$SLURM_TMPDIR"
-MODEL_DIR="/scratch/omata/model-soups-models"
+#MODEL_DIR="/scratch/omata/model-soups-bootstrap-stage"
+MODEL_DIR="~/code/model-soups/model-soups-bootstraps-70p"
 
 #Move into your project directory
-cd ~/links/scratch/model-soups-mine
-python test.py
+#WORK=~/links/scratch/model-soups-runs/bootstrap_greedy_1
+WORK=~/code/model-soups/model-soups-runs/bootstrap_greedy_1
+mkdir -p "$WORK"
+cd "$WORK"
+#python test.py
+
+if [ ! -f ./imagenet_98_idxs.npy ]; then
+    cp /home/omata/code/model-soups/imagenet_98_idxs.npy ./
+    echo "Copied imagenet_98_idxs.npy to current directory."
+else
+    echo "File already exists. Skipping copy."
+fi
+
 # Run your command
-python main.py \
+
+python ~/code/model-soups/main.py \
   --eval-individual-models \
+  --greedy-soup \
   --data-location "$DATA_DIR" \
   --model-location "$MODEL_DIR"
 

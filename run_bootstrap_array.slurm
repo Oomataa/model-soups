@@ -44,10 +44,10 @@ DATA="$SLURM_TMPDIR"
 EPOCHS=8
 BATCH=256
 
-cd ~/links/scratch/model-soups-mine
+cd ~/code/model-soups
 
 # NEW: separate location for bootstrap checkpoints
-CKPT_ROOT=/scratch/omata/model-soups-bootstraps
+CKPT_ROOT="$(pwd)/model-soups-bootstraps-70p" 
 SEED=${SLURM_ARRAY_TASK_ID}               # unique per job: 0..70
 CKPT_DIR=${CKPT_ROOT}/seed_${SEED}        # seed-specific subfolder
 mkdir -p "${CKPT_DIR}"
