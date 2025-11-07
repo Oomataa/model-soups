@@ -84,7 +84,7 @@ def parse_arguments():
                     help="Use bootstrap sampling (WITH replacement) for the training loader.")
     parser.add_argument("--bootstrap-seed", type=int, default=0,
                     help="Seed that defines the bootstrap sample for this run.")
-    parser.add_argument("--bootstrap-size-ratio", type=float, default=1.0,
+    parser.add_argument("--bootstrap-size-ratio", type=float, default=0.7,
                     help="Draws per epoch as a fraction of the 98%% train set size; 1.0 = classic bootstrap.")
 
     return parser.parse_args()
@@ -119,7 +119,7 @@ if __name__ == '__main__':
     train_dset = ImageNet98p(train_preprocess, location=args.data_location, batch_size=args.batch_size, num_workers=args.workers)
 
         # ===== BEGIN: Bootstrap loader (WITH replacement) over the 98% split =====
-    from torch.utils.data import DataLoader, RandomSampler
+    from torch.utils.data import DataLoader, RandomSampler, SubsetRandomSampler
     import torch, math
 
     use_pin_memory = torch.cuda.is_available()
@@ -134,12 +134,15 @@ if __name__ == '__main__':
         g = torch.Generator()
         g.manual_seed(args.bootstrap_seed)
 
-        bootstrap_sampler = RandomSampler(
-            data_source=base_ds,
-            replacement=True,   # <-- bootstrap = WITH replacement
-            num_samples=m,
-            generator=g
-        )
+        indices = torch.randperm(n_total, generator=g)[:m].tolist()
+        bootstrap_sampler = SubsetRandomSampler(indices) #w/o replacement
+       
+        #bootstrap_sampler = RandomSampler(
+        #    data_source=base_ds,
+        #    replacement=True,   # <-- bootstrap = WITH replacement
+        #    num_samples=m,
+        #    generator=g
+        #)
 
 
 
@@ -152,7 +155,9 @@ if __name__ == '__main__':
             pin_memory=use_pin_memory,
         )
 
-        print(f">> BOOTSTRAP ACTIVE: draws/epoch={m} from n={n_total} (98% split), seed={args.bootstrap_seed}")
+
+        print(f">> BOOTSTRAP ACTIVE: 70% WITHOUT replacement ({m}/{n_total} samples)")
+        #print(f">> BOOTSTRAP ACTIVE: draws/epoch={m} from n={n_total} (98% split), seed={args.bootstrap_seed}")
     # ===== END: Bootstrap loader =====
 
 
