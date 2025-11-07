@@ -79,14 +79,15 @@ if __name__ == '__main__':
 
     # Step 2: Evaluate individual models.
     if args.eval_individual_models or args.uniform_soup or args.greedy_soup:
-        base_model, preprocess = clip.load('ViT-B/32', 'cpu', jit=False)
+        base_model, preprocess = clip.load('ViT-B/32', 'cuda' if torch.cuda.is_available() else 'cpu', jit=False)
 
     if args.eval_individual_models:
         if os.path.exists(INDIVIDUAL_MODEL_RESULTS_FILE):
             os.remove(INDIVIDUAL_MODEL_RESULTS_FILE)
         for j, model_path in enumerate(model_paths):
             assert os.path.exists(model_path)
-            state_dict = torch.load(model_path, map_location=torch.device('cpu'))
+            #state_dict = torch.load(model_path, map_location=torch.device('cpu'))
+            state_dict = torch.load(model_path, map_location=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
             model = get_model_from_sd(state_dict, base_model)
 
             results = {'model_name' : f'model_{j}'}
