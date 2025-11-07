@@ -1,0 +1,31 @@
+Lmod has detected the following error: The following module(s) are unknown:
+"cuda/12.1"
+
+Please check the spelling or version number. Also try "module spider ..."
+It is also possible your cache file is out-of-date; it may help to try:
+  $ module --ignore_cache load "cuda/12.1"
+
+Also make sure that all modulefiles written in TCL start with the string
+#%Module
+
+
+
+Evaluating model 0 of 71 on ImageNet2p.
+Traceback (most recent call last):
+  File "/lustre10/scratch/omata/model-soups/main.py", line 100, in <module>
+    dataset = dataset_cls(preprocess, args.data_location, args.batch_size, args.workers)
+  File "/lustre10/scratch/omata/model-soups/datasets/imagenet.py", line 24, in __init__
+    self.populate_train()
+  File "/lustre10/scratch/omata/model-soups/datasets/imagenet.py", line 29, in populate_train
+    self.train_dataset = ImageFolderWithPaths(
+  File "/lustre10/scratch/omata/model-soups/datasets/common.py", line 28, in __init__
+    super().__init__(path, transform)
+  File "/home/omata/.local/lib/python3.10/site-packages/torchvision/datasets/folder.py", line 328, in __init__
+    super().__init__(
+  File "/home/omata/.local/lib/python3.10/site-packages/torchvision/datasets/folder.py", line 150, in __init__
+    samples = self.make_dataset(
+  File "/home/omata/.local/lib/python3.10/site-packages/torchvision/datasets/folder.py", line 203, in make_dataset
+    return make_dataset(
+  File "/home/omata/.local/lib/python3.10/site-packages/torchvision/datasets/folder.py", line 104, in make_dataset
+    raise FileNotFoundError(msg)
+FileNotFoundError: Found no valid file for the classes n02423022. Supported extensions are: .jpg, .jpeg, .png, .ppm, .bmp, .pgm, .tif, .tiff, .webp

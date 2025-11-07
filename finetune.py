@@ -74,11 +74,32 @@ def parse_arguments():
     parser.add_argument(
         "--timm-aug", action="store_true", default=False,
     )
+    parser.add_argument(
+        "--save-last-only", action="store_true", default=False,
+        help="Save only the final epoch as last.pt"
+    )
+
+
+    parser.add_argument("--bootstrap", action="store_true", default=False,
+                    help="Use bootstrap sampling (WITH replacement) for the training loader.")
+    parser.add_argument("--bootstrap-seed", type=int, default=0,
+                    help="Seed that defines the bootstrap sample for this run.")
+    parser.add_argument("--bootstrap-size-ratio", type=float, default=1.0,
+                    help="Draws per epoch as a fraction of the 98%% train set size; 1.0 = classic bootstrap.")
+
     return parser.parse_args()
+
 
 if __name__ == '__main__':
     args = parse_arguments()
     DEVICE = 'cuda'
+
+
+        # --- Keep only best + last checkpoints ---
+    os.makedirs(args.model_location, exist_ok=True)
+    best_top1 = float('-inf')
+    best_path = os.path.join(args.model_location, 'best.pt')
+
 
     if args.custom_template:
         template = [lambda x : f"a photo of a {x}."]
@@ -96,6 +117,48 @@ if __name__ == '__main__':
     else:
         train_preprocess = preprocess
     train_dset = ImageNet98p(train_preprocess, location=args.data_location, batch_size=args.batch_size, num_workers=args.workers)
+
+        # ===== BEGIN: Bootstrap loader (WITH replacement) over the 98% split =====
+    from torch.utils.data import DataLoader, RandomSampler
+    import torch, math
+
+    use_pin_memory = torch.cuda.is_available()
+    if args.bootstrap:
+        base_ds = train_dset.train_dataset   # the 98% ImageNet training subset
+        n_total = len(base_ds)               # how many items in that 98% pool
+
+        # Classic bootstrap: draw n_total samples WITH replacement each epoch.
+        m = max(1, int(round(args.bootstrap_size_ratio * n_total)))
+
+        # Reproducible sampler (change seed to change the sample)
+        g = torch.Generator()
+        g.manual_seed(args.bootstrap_seed)
+
+        bootstrap_sampler = RandomSampler(
+            data_source=base_ds,
+            replacement=True,   # <-- bootstrap = WITH replacement
+            num_samples=m,
+            generator=g
+        )
+
+
+
+        # New loader using the sampler (IMPORTANT: do not pass shuffle=True with a sampler)
+        train_dset.train_loader = DataLoader(
+            base_ds,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            sampler=bootstrap_sampler,
+            pin_memory=use_pin_memory,
+        )
+
+        print(f">> BOOTSTRAP ACTIVE: draws/epoch={m} from n={n_total} (98% split), seed={args.bootstrap_seed}")
+    # ===== END: Bootstrap loader =====
+
+
+
+
+
     test_dset = ImageNet(preprocess, location=args.data_location, batch_size=args.batch_size, num_workers=args.workers)
     clf = zeroshot_classifier(base_model, train_dset.classnames, template, DEVICE)
     NUM_CLASSES = len(train_dset.classnames)
@@ -174,9 +237,25 @@ if __name__ == '__main__':
                 pbar.set_description(
                     f"Val loss: {loss.item():.4f}   Acc: {100*correct/count:.2f}")
             top1 = correct / count
-        print(f'Val acc at epoch {epoch}: {100*top1:.2f}')
 
-        model_path = os.path.join(args.model_location, f'{args.name}_{epoch + 1}.pt')
-        print('Saving model to', model_path)
-        torch.save(model.module.state_dict(), model_path)
+
+
+        epoch_idx = epoch + 1
+        print(f'Val acc at epoch {epoch_idx}: {100*top1:.2f}')
+
+        if args.save_last_only and epoch_idx != args.epochs:
+            # Skip saving intermediate epochs
+            continue
+
+        last_path = os.path.join(args.model_location, 'last.pt' if args.save_last_only else f'{args.name}_{epoch_idx}.pt')
+        torch.save(model.module.state_dict(), last_path)
+        print(f'[INFO] Saved checkpoint -> {last_path}')
+
+
+
+       # print(f'Val acc at epoch {epoch}: {100*top1:.2f}')
+
+       # model_path = os.path.join(args.model_location, f'{args.name}_{epoch + 1}.pt')
+       # print('Saving model to', model_path)
+       # torch.save(model.module.state_dict(), model_path)
 
