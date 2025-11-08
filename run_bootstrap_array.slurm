@@ -1,9 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=bootsoups
 #SBATCH --account=rrg-ebrahimi
-#SBATCH --array=0-71                     
+#SBATCH --array=0-1                     
 #SBATCH --time=8:00:00
-#SBATCH --gres=gpu:1
+#SBATCH --partition=gpubase_bygpu_b2
+#SBATCH --gres=gpu:nvidia_h100_80gb_hbm3_2g.20gb:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --output=logs/bootsoups_%A_%a.out
@@ -47,11 +48,11 @@ BATCH=256
 cd ~/code/model-soups
 
 # NEW: separate location for bootstrap checkpoints
-CKPT_ROOT="$(pwd)/model-soups-bootstraps-70p" 
+CKPT_ROOT="$(pwd)/model-soups-bootstraps-70test" 
 SEED=${SLURM_ARRAY_TASK_ID}               # unique per job: 0..70
 CKPT_DIR=${CKPT_ROOT}/seed_${SEED}        # seed-specific subfolder
 mkdir -p "${CKPT_DIR}"
-
+mkdir -p logs
 NAME="ft_bootS${SEED}"                    # unique filename stem per model
 
 python finetune.py \
@@ -60,7 +61,7 @@ python finetune.py \
   --name "$NAME" \
   --bootstrap \
   --bootstrap-seed $SEED \
-  --save-last-only
+  
 
 
 echo "[INFO] Evaluation job finished at $(date)"

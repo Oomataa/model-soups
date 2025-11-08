@@ -2,7 +2,6 @@ import argparse
 import os
 import torch
 import clip
-import os
 from tqdm import tqdm
 import time
 
@@ -74,14 +73,11 @@ def parse_arguments():
     parser.add_argument(
         "--timm-aug", action="store_true", default=False,
     )
-    parser.add_argument(
-        "--save-last-only", action="store_true", default=False,
-        help="Save only the final epoch as last.pt"
-    )
+
 
 
     parser.add_argument("--bootstrap", action="store_true", default=False,
-                    help="Use bootstrap sampling (WITH replacement) for the training loader.")
+                    help="Use bootstrap sampling (WITHOUT replacement) for the training loader.")
     parser.add_argument("--bootstrap-seed", type=int, default=0,
                     help="Seed that defines the bootstrap sample for this run.")
     parser.add_argument("--bootstrap-size-ratio", type=float, default=0.7,
@@ -185,9 +181,9 @@ if __name__ == '__main__':
 
     loss_fn = torch.nn.CrossEntropyLoss()
 
-    model_path = os.path.join(args.model_location, f'{args.name}_0.pt')
-    print('Saving model to', model_path)
-    torch.save(model.module.state_dict(), model_path)
+    #model_path = os.path.join(args.model_location, f'{args.name}_0.pt')
+    #print('Saving model to', model_path)
+    #torch.save(model.module.state_dict(), model_path)
 
     for epoch in range(args.epochs):
         # Train
@@ -248,13 +244,22 @@ if __name__ == '__main__':
         epoch_idx = epoch + 1
         print(f'Val acc at epoch {epoch_idx}: {100*top1:.2f}')
 
-        if args.save_last_only and epoch_idx != args.epochs:
-            # Skip saving intermediate epochs
-            continue
 
-        last_path = os.path.join(args.model_location, 'last.pt' if args.save_last_only else f'{args.name}_{epoch_idx}.pt')
-        torch.save(model.module.state_dict(), last_path)
-        print(f'[INFO] Saved checkpoint -> {last_path}')
+        # --- Save final checkpoint per model (after all epochs) ---
+    seed_idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))  # unique ID for each SLURM array job
+    final_path = os.path.join(args.model_location, f"model_{seed_idx}.pt")
+    torch.save(model.module.state_dict(), final_path)
+    print(f"[INFO] Saved FINAL checkpoint -> {final_path}")
+
+
+
+    #    if args.save_last_only and epoch_idx != args.epochs:
+            # Skip saving intermediate epochs
+    #        continue
+
+    #    last_path = os.path.join(args.model_location, 'last.pt' if args.save_last_only else f'{args.name}_{epoch_idx}.pt')
+    #    torch.save(model.module.state_dict(), last_path)
+    #    print(f'[INFO] Saved checkpoint -> {last_path}')
 
 
 
