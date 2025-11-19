@@ -1,14 +1,18 @@
 #!/bin/bash
 #SBATCH --job-name=bootsoups
-#SBATCH --account=rrg-ebrahimi
 #SBATCH --array=0-1                     
 #SBATCH --time=8:00:00
-#SBATCH --partition=gpubase_bygpu_b2
-#SBATCH --gres=gpu:nvidia_h100_80gb_hbm3_2g.20gb:1
+#SBATCH --partition=gpu-a100
+#SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --output=logs/bootsoups_%A_%a.out
 #SBATCH --error=logs/bootsoups_%A_%a.err
+
+
+#account=rrg-ebrahimi 
+#partition=gpubase_bygpu_b2
+#gres=gpu:nvidia_h100_80gb_hbm3_2g.20gb:1
 
 # --- Activate your environment (edit to match your setup) ---
 source ~/miniconda3/etc/profile.d/conda.sh
