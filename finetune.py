@@ -4,7 +4,8 @@ import torch
 import clip
 from tqdm import tqdm
 import time
-
+import random, json, numpy as np
+from copy import deepcopy
 from timm.data.transforms_factory import transforms_imagenet_train
 
 from datasets.imagenet import ImageNet98p, ImageNet
@@ -82,9 +83,338 @@ def parse_arguments():
                     help="Seed that defines the bootstrap sample for this run.")
     parser.add_argument("--bootstrap-size-ratio", type=float, default=0.7,
                     help="Draws per epoch as a fraction of the 98%% train set size; 1.0 = classic bootstrap.")
+    parser.add_argument("--search-hparams", action="store_true", default=False,
+                    help="Run hyperparameter search before full training.")
+    parser.add_argument("--num-trials", type=int, default=10,
+                    help="How many random hyperparameter configs to test.")
+
 
     return parser.parse_args()
 
+def sample_hparams():
+    aug_options = [None, "rand-m4-n1", "rand-m8-n1", "rand-m12-n1", "rand-m16-n1"]
+    return {
+        "lr": 10 ** np.random.uniform(-6, -4),
+        "wd": 10 ** np.random.uniform(-5, -1),
+        "mix": random.choice([0.0, 0.2, 0.4, 0.6]),
+        "smoothing": random.choice([0.0, 0.05, 0.1, 0.2]),
+        "epochs": random.choice([4, 6, 8, 10, 12]),
+        "aug": random.choice(aug_options),
+    }
+
+
+
+def train_one_config(args, train_dset, test_dset, base_model, preprocess, DEVICE,
+                     lr, wd, epochs, mix, smoothing, aug, trial_tag):
+
+    """
+    Train a fresh model with given (all hparams), evaluate on val,
+    save checkpoint for this trial, and return best val accuracy and path.
+    """
+
+    # ----------------- SET PER-TRIAL TRAIN TRANSFORM (AUG) -----------------
+    if args.timm_aug:
+        # Use timm's ImageNet train transform with RandAugment policy from `aug`
+        trial_transform = transforms_imagenet_train(
+            img_size=base_model.visual.input_resolution,
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711),
+            auto_augment=aug,   # <--- THIS is where aug matters
+        )
+    else:
+        # Fall back to CLIP's preprocess (no extra RandAugment)
+        trial_transform = preprocess
+
+    # Update underlying train dataset transform
+    if hasattr(train_dset, "train_dataset"):
+        train_dset.train_dataset.transform = trial_transform
+    else:
+        # Fallback in case the attribute name is different
+        try:
+            train_dset.dataset.transform = trial_transform
+        except AttributeError:
+            pass
+
+
+    # --- Build template and classifier as you already do ---
+    if args.custom_template:
+        template = [lambda x: f"a photo of a {x}."]
+    else:
+        template = openai_imagenet_template
+
+    NUM_CLASSES = len(train_dset.classnames)
+    feature_dim = base_model.visual.output_dim
+
+    # Zeroshot classifier for initialization
+    clf = zeroshot_classifier(base_model, train_dset.classnames, template, DEVICE)
+
+    # Fresh model wrapper every trial
+    model = ModelWrapper(base_model, feature_dim, NUM_CLASSES, normalize=True, initial_weights=clf)
+    for p in model.parameters():
+        p.data = p.data.float()
+
+    model = model.to(DEVICE)
+    devices = [x for x in range(torch.cuda.device_count())]
+    model = torch.nn.DataParallel(model, device_ids=devices)
+
+    model_parameters = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(model_parameters, lr=lr, weight_decay=wd)
+
+    num_batches = len(train_dset.train_loader)
+    scheduler = cosine_lr(optimizer, lr, args.warmup_length, epochs * num_batches)
+
+    loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=smoothing)
+
+
+    best_top1 = -float("inf")
+
+    for epoch in range(epochs):
+        # ----------------- TRAIN -----------------
+        model.train()
+        end = time.time()
+        for i, batch in enumerate(train_dset.train_loader):
+            step = i + epoch * num_batches
+            scheduler(step)
+            optimizer.zero_grad()
+
+            batch = maybe_dictionarize_batch(batch)
+            inputs, labels = batch['images'].to(DEVICE), batch['labels'].to(DEVICE)
+            data_time = time.time() - end
+
+            if mix > 0.0:
+                # ----- Mixup -----
+                lam = np.random.beta(mix, mix)
+                index = torch.randperm(inputs.size(0), device=inputs.device)
+
+                mixed_x = lam * inputs + (1 - lam) * inputs[index]
+                y_a, y_b = labels, labels[index]
+
+                logits = model(mixed_x)
+                loss = lam * loss_fn(logits, y_a) + (1 - lam) * loss_fn(logits, y_b)
+            else:
+                # ----- No mixup -----
+                logits = model(inputs)
+                loss = loss_fn(logits, labels)
+
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+
+            batch_time = time.time() - end
+            end = time.time()
+
+            if i % 20 == 0:
+                percent_complete = 100.0 * i / len(train_dset.train_loader)
+                print(
+                    f"[{trial_tag}] Train Epoch: {epoch} "
+                    f"[{percent_complete:.0f}% {i}/{len(train_dset.train_loader)}]\t"
+                    f"Loss: {loss.item():.6f}\tData (t) {data_time:.3f}\tBatch (t) {batch_time:.3f}",
+                    flush=True,
+                )
+
+        # ----------------- EVAL -----------------
+        model.eval()
+        correct, count = 0.0, 0.0
+        with torch.no_grad():
+            pbar = tqdm(test_dset.test_loader, desc=f"[{trial_tag}] Eval epoch {epoch+1}")
+            for batch in pbar:
+                batch = maybe_dictionarize_batch(batch)
+                inputs, labels = batch['images'].to(DEVICE), batch['labels'].to(DEVICE)
+
+                logits = model(inputs)
+                loss = loss_fn(logits, labels)
+
+                pred = logits.argmax(dim=1, keepdim=True)
+                correct += pred.eq(labels.view_as(pred)).sum().item()
+                count += len(logits)
+                pbar.set_postfix({"val_loss": loss.item(), "acc": 100.0 * correct / count})
+
+        top1 = correct / count
+        print(f"[{trial_tag}] Val acc at epoch {epoch+1}: {100*top1:.2f}")
+
+        if top1 > best_top1:
+            best_top1 = top1
+
+    # ----------------- SAVE CHECKPOINT FOR THIS TRIAL -----------------
+    seed_idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
+    ckpt_name = f"trial_{trial_tag}_seed{seed_idx}.pt"
+    ckpt_path = os.path.join(args.model_location, ckpt_name)
+    torch.save(model.module.state_dict(), ckpt_path)
+    print(f"[{trial_tag}] Saved checkpoint -> {ckpt_path}")
+
+    return best_top1, ckpt_path
+
+
+if __name__ == '__main__':
+    args = parse_arguments()
+    DEVICE = 'cuda'
+
+    # Make sure checkpoint directory exists
+    os.makedirs(args.model_location, exist_ok=True)
+
+    # ----------------- LOAD BASE MODEL + PREPROCESS -----------------
+    base_model, preprocess = clip.load(args.model, DEVICE, jit=False)
+
+    # ----------------- DATASETS (same logic as before) -----------------
+    # 98p is the 98% of ImageNet train set that we train on -- the other 2% is hold-out val.
+    if args.timm_aug:
+        train_preprocess = transforms_imagenet_train(
+            img_size=base_model.visual.input_resolution,
+            mean=(0.48145466, 0.4578275, 0.40821073),
+            std=(0.26862954, 0.26130258, 0.27577711)
+        )
+    else:
+        train_preprocess = preprocess
+
+    train_dset = ImageNet98p(
+        train_preprocess,
+        location=args.data_location,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+    )
+
+    # ===== BEGIN: Bootstrap loader (WITHOUT replacement) over the 98% split =====
+    from torch.utils.data import DataLoader, SubsetRandomSampler
+    import math
+
+    use_pin_memory = torch.cuda.is_available()
+    if args.bootstrap:
+        base_ds = train_dset.train_dataset   # the 98% ImageNet training subset
+        n_total = len(base_ds)               # how many items in that 98% pool
+
+        m = max(1, int(round(args.bootstrap_size_ratio * n_total)))
+
+        g = torch.Generator()
+        g.manual_seed(args.bootstrap_seed)
+
+        indices = torch.randperm(n_total, generator=g)[:m].tolist()
+        bootstrap_sampler = SubsetRandomSampler(indices)
+
+        # New loader using the sampler (IMPORTANT: do not pass shuffle=True with a sampler)
+        train_dset.train_loader = DataLoader(
+            base_ds,
+            batch_size=args.batch_size,
+            num_workers=args.workers,
+            sampler=bootstrap_sampler,
+            pin_memory=use_pin_memory,
+        )
+
+        print(f">> BOOTSTRAP ACTIVE: {m}/{n_total} samples "
+              f"(70% of 98% split, seed={args.bootstrap_seed})")
+    # ===== END: Bootstrap loader =====
+
+    test_dset = ImageNet(
+        preprocess,
+        location=args.data_location,
+        batch_size=args.batch_size,
+        num_workers=args.workers,
+    )
+
+    # ----------------- HYPERPARAMETER SEARCH OR SINGLE RUN -----------------
+
+    seed_idx = int(os.environ.get("SLURM_ARRAY_TASK_ID", 0))
+
+    if args.search_hparams:
+        print(f"[HPSEARCH] Running hyperparameter search for seed {seed_idx} "
+              f"with {args.num_trials} trials.")
+
+        best_metric = -float("inf")
+        best_config = None
+        best_ckpt_path = None
+        trial_results = []
+
+        for t in range(args.num_trials):
+            config = sample_hparams()
+            print(f"\n[HPSEARCH] Trial {t+1}/{args.num_trials} with config: {config}")
+
+            top1, ckpt_path = train_one_config(
+                args,
+                train_dset,
+                test_dset,
+                base_model,
+                preprocess,
+                DEVICE,
+                lr=config["lr"],
+                wd=config["wd"],
+                epochs=config["epochs"],
+                mix=config["mix"],
+                smoothing=config["smoothing"],
+                aug=config["aug"],
+                trial_tag=f"trial{t}",
+            )
+
+
+
+            trial_results.append(
+                {"trial": t, "config": config, "val_top1": float(top1)}
+            )
+
+            if top1 > best_metric:
+                best_metric = top1
+                best_config = config
+                best_ckpt_path = ckpt_path
+
+        # Save best hyperparams + all results for this seed
+        hparam_file = os.path.join(
+            args.model_location,
+            f"best_hparams_seed{seed_idx}.json",
+        )
+        with open(hparam_file, "w") as f:
+            json.dump(
+                {
+                    "seed": seed_idx,
+                    "best_config": best_config,
+                    "best_val_top1": float(best_metric),
+                    "trials": trial_results,
+                },
+                f,
+                indent=2,
+            )
+        print(f"[HPSEARCH] Saved best hparams -> {hparam_file}")
+        print(
+            f"[HPSEARCH] Best config for seed {seed_idx}: "
+            f"{best_config}, val_top1={100*best_metric:.2f}"
+        )
+
+        # Rename best checkpoint to model_<seed>.pt
+        final_path = os.path.join(args.model_location, f"model_{seed_idx}.pt")
+        os.replace(best_ckpt_path, final_path)
+        print(f"[HPSEARCH] Best checkpoint renamed -> {final_path}")
+
+    else:
+        # No search: train once with args.lr / args.wd / args.epochs
+        print(f"[INFO] Single-run training for seed {seed_idx} "
+              f"with lr={args.lr}, wd={args.wd}, epochs={args.epochs}")
+
+        top1, ckpt_path = train_one_config(
+            args,
+            train_dset,
+            test_dset,
+            base_model,
+            preprocess,
+            DEVICE,
+            lr=args.lr,
+            wd=args.wd,
+            epochs=args.epochs,
+            mix=0.0,          # or some default if you want mixup in non-search
+            smoothing=0.0,    # same idea
+            aug=None,         # no extra RandAug
+            trial_tag="single",
+        )
+
+
+
+
+        final_path = os.path.join(args.model_location, f"model_{seed_idx}.pt")
+        os.replace(ckpt_path, final_path)
+        print(
+            f"[INFO] Saved FINAL checkpoint -> {final_path} "
+            f"(val_top1={100*top1:.2f})"
+        )
+
+
+"""
 
 if __name__ == '__main__':
     args = parse_arguments()
@@ -269,3 +599,4 @@ if __name__ == '__main__':
        # print('Saving model to', model_path)
        # torch.save(model.module.state_dict(), model_path)
 
+"""
