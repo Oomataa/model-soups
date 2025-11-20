@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH --job-name=bootsoups
-#SBATCH --array=0-5                  
-#SBATCH --time=20:00:00
+#SBATCH --job-name=nobootsoups
+#SBATCH --array=0-71                   
+#SBATCH --time=8:00:00
 #SBATCH --partition=gpu-a100
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --output=logs/bootsoups_%A_%a.out
-#SBATCH --error=logs/bootsoups_%A_%a.err
+#SBATCH --output=logs/nobootsoups_%A_%a.out
+#SBATCH --error=logs/nobootsoups_%A_%a.err
 
 WORKDIR=$(pwd)
 WORK_DATA_ROOT="/work/kahou_lab/omata/imagenet_work"
@@ -21,7 +21,7 @@ mkdir -p "$WORKDIR/logs"
 #partition=gpubase_bygpu_b2
 #gres=gpu:nvidia_h100_80gb_hbm3_2g.20gb:1
 
-# --- Activate your environment (edit to match your setup) ---
+# --- Activate your environment  ---
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate model_soups
 cd $WORK_DATA_ROOT
@@ -64,7 +64,7 @@ DATA="$WORK_DATA_ROOT"
 cd ~/code/model-soups
 
 # NEW: separate location for bootstrap checkpoints
-CKPT_ROOT="$WORKDIR/model-soups-bootstraps-70hparamtest" 
+CKPT_ROOT="$WORKDIR/model-soups-nobootstraps" 
 SEED=${SLURM_ARRAY_TASK_ID}               # unique per job: 0..70
 CKPT_DIR=${CKPT_ROOT}/seed_${SEED}        # seed-specific subfolder
 mkdir -p "$CKPT_DIR" "$WORKDIR/logs"
@@ -72,13 +72,10 @@ mkdir -p "$CKPT_DIR" "$WORKDIR/logs"
 NAME="ft_bootS${SEED}"                    # unique filename stem per model
 
 python finetune.py \
-    --data-location "$DATA" \
-    --model-location "$CKPT_DIR" \
-    --name "$NAME" \
-    --bootstrap \
-    --bootstrap-seed $SEED \
-    --search-hparams \
-    --num-trials 5
+  --data-location "$DATA" \
+  --model-location "$CKPT_DIR" \
+  --name "$NAME" \
+
   
 
 
