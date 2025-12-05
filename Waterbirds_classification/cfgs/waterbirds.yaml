@@ -1,0 +1,14 @@
+accelerator: gpu
+batch_size: 32
+check_val_every_n_epoch: 10
+ckpt_every_n_epoch: 10
+datamodule: waterbirds
+devices: 4
+lr: 3e-3
+lr_scheduler: cosine
+max_epochs: 100
+metrics: [loss, acc, acc_by_group]
+model: resnet
+resnet_version: 50
+strategy: ddp_spawn_find_unused_parameters_false
+accelerator: gpu
