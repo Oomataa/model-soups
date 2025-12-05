@@ -80,24 +80,7 @@ Also note: if you are interested in running a minial example of [wise-ft](https:
 
 Also note: if you are interested in running minimal examples of zeroshot/fine-tuning, you can run `python zeroshot.py` or `python finetune.py`. See program arguments (i.e., run with `--help`) for more information. Note that these are minimal examples and do not contain rand-aug, mixup, or LP-FT.
 
-### Questions
 
-If you have any questions please feel free to raise an issue. If there are any FAQ we will answer them here.
-
-### Authors
-
-This project is by the following authors, where * denotes equal contribution (alphabetical ordering):
-- [Mitchell Wortsman](https://mitchellnw.github.io/)
-- [Gabriel Ilharco](http://gabrielilharco.com/)
-- [Samir Yitzhak Gadre](https://sagadre.github.io/)
-- [Rebecca Roelofs](https://twitter.com/beccaroelofs)
-- [Raphael Gontijo-Lopes](https://raphagl.com/)
-- [Ari S. Morcos](http://www.arimorcos.com/)
-- [Hongseok Namkoong](https://hsnamkoong.github.io/)
-- [Ali Farhadi](https://homes.cs.washington.edu/~ali/)
-- [Yair Carmon*](https://www.cs.tau.ac.il/~ycarmon/)
-- [Simon Kornblith*](https://simonster.com/)
-- [Ludwig Schmidt*](https://people.csail.mit.edu/ludwigs/)
 
 
 ## Citing
