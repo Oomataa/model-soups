@@ -1,106 +1,157 @@
-# [Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time](https://arxiv.org/abs/2203.05482)
+# Bootstrapped Model Soups for Fairness
 
-This repository contains code for the paper [Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time](https://arxiv.org/abs/2203.05482).
+##  Project Overview
+This project investigates **Model Soups** (Wortsman et al., 2022) as a strategy to improve fairness and robustness under **spurious correlations**.
 
-Using this repository you can reproduce the figure below, which shows that model soups (averaging multiple fine-tuned solutions) can outperform
-the best individual model.
-As an alternative to this repository, [Cade Gordon](http://cadegordon.io/) has made the following [colab notebook](https://colab.research.google.com/drive/1UmK-phTRXC4HoKb7_rScawnRqlG82svF?usp=sharing) to explore model soups on CIFAR10.
-<p align="center">
-<img src="figure.png", width="625"/>
-</p>
+We extend the original approach by incorporating **bootstrapping** during teacher training and evaluating whether model diversity leads to improved **worst-group accuracy**.
+
+Experiments focus on:
+- **Waterbirds** (spurious background correlations)
+- **ImageNet + OOD variants** (distribution shift)
+- A **medical imaging task** (Alzheimer’s Disease vs Cognitively Normal classification)
+
+---
+
+##  Key Goals
+- Reproduce **Uniform Model Soup** results from the original paper (no bootstrapping).
+- Train **bootstrapped teacher models** to introduce dataset-level diversity.
+- Compare:
+  - **Uniform Soup (non-bootstrap vs bootstrap)**
+  - **Greedy/Ordered Soup (non-bootstrap vs bootstrap)**
+- Analyze both:
+  - **Average accuracy**
+  - **Worst-group / worst-subgroup accuracy** as a fairness-oriented metric.
+
+---
+
+##  Dataset: Waterbirds
+- Binary classification: *Waterbird vs Landbird*
+- Environment attribute: *Water vs Land background*
+- **4 groups** → measures reliance on background:
+
+| Group | Species   | Background | Frequency |
+|-------|-----------|------------|-----------|
+| 0     | Waterbird | Water      | Majority  |
+| 1     | Waterbird | Land       | Minority  |
+| 2     | Landbird  | Land       | Majority  |
+| 3     | Landbird  | Water      | Minority  |
+
+Performance is evaluated using:
+- **Average accuracy**
+- **Worst-group accuracy** → fairness indicator
+
+---
+
+##  Teacher Training (Waterbirds)
+We trained 30 ResNet-50 teacher models under two settings:
+
+| Setting | Description |
+|--------|-------------|
+| **Non-Bootstrap ERM** | Standard training on full dataset |
+| **Bootstrap ERM** | Each model trains on a **70% resampled dataset** to increase diversity |
+
+Hyperparameter: **Learning Rate = 3e-3**  
+(Additional HP search planned / used to refine teacher selection per seed.)
+
+---
+
+## Model Soup Methods
+
+### 1️ Uniform Model Soup
+- *Simple average* of model weights  
+- All teachers contribute equally
+- Sensitive to low-performing or overfitted teachers
+
+### 2️ Greedy (Ordered) Model Soup
+- Sort teachers by validation accuracy
+- Add models one by one in that order
+- Only keep a model in the soup if it **improves validation performance**
 
 
-## Code
+---
 
-There are 5 steps to reproduced the figure above: 1) downloading the models, 2) evaluating the individual models, 3) running the uniform soup, 4) running the greedy soup, and 5) making the plot.
+## Results Summary on Waterbirds (5 runs — mean ± std)
 
-Note that any of these steps can be skipped, i.e, you can immediately generate the plot above via `python main.py --plot`.
-You can also run the greedy soup without evaluating the individual models.
-This is because we have already completed all of the steps and saved the results files in this repository (i.e., `individual_model_results.jsonl`).
-If you do decide to rerun a step, the corresponding results file or plot is deleted and regenerated.
+| Method                     | Test Avg Acc      | Test Worst-Group Acc |
+|---------------------------|-------------------|----------------------|
+| Uniform Soup (non-bootstrap)   | ~89.6% ± 0.1 | ~43.0% ± 0.8 |
+| Uniform Soup (bootstrap)       | ~87.9% ± 0.1 | **49.6% ± 0.4** |
+| Greedy Soup (non-bootstrap)    | ~89.4% ± 0.0 | ~43.2% ± 0.0 |
+| Greedy Soup (bootstrap)        | ~86.7% ± 0.0 | **50.9% ± 0.0** |
 
-The exception is step 1, downloading the models. If you wish to run steps 2, 3, or 4 you must first run step 1.
+###  Key Finding (Waterbirds)
+Bootstrapping **improves worst-group generalization**, showing increased robustness to spurious cues, even when average accuracy slightly drops. Greedy/ordered soups benefit most from having diverse, strong teachers, while uniform soups are more sensitive to the inclusion of weaker models.
 
-### Install dependencies and downloading datasets
+---
 
-To install the dependencies either run the following code or see [environment.md](environment.md) for more information.
+##  Additional Experiments: ImageNet & OOD Benchmarks
+
+Beyond Waterbirds, we also study model soups on large-scale **ImageNet** classification and multiple **distribution-shifted test sets**.
+
+### Datasets
+- **In-distribution**: ImageNet-1k (ILSVRC 2012)
+- **OOD datasets** (same label space, different distributions):
+  - ImageNet-R
+  - ImageNet-A
+  - ImageNet-Sketch
+  - ImageNet-V2
+  - ObjectNet
+
+### Setup (High-Level)
+- Train multiple teacher models (e.g., ResNet / ViT backbones) on ImageNet under:
+  - **Non-bootstrapped ERM**
+  - **Bootstrapped ERM** at different bootstrap fractions (e.g., 40%, 70%, 90%)
+- For each setting:
+  - Evaluate **single models** and **uniform soups**
+  - Analyze performance on both **ImageNet** and its **OOD variants**
+
+---
+
+##  Medical Imaging: AD vs CN Classification
+
+We additionally test model soups on a **downstream medical imaging task**:
+
+### Task
+- Binary classification: **Alzheimer’s Disease (AD)** vs **Cognitively Normal (CN)**.
+- Input: Brain MRI scans (preprocessed into 2D slices or 3D volumes, depending on the setup).
+- Goal: Assess whether findings from Waterbirds and ImageNet **transfer to a clinically relevant setting**.
+
+### Approach
+- Start from ImageNet-pretrained backbones (e.g., ResNet-50).
+- Fine-tune multiple teacher models on the AD vs CN task.
+- Build:
+  - **Uniform soups** over all fine-tuned teachers.
+  - **Greedy/ordered soups** that prioritize models that best generalize on a validation split (e.g., using accuracy or AUROC).
+
+### High-Level Outcome
+- **Greedy soups consistently outperform uniform soups** and individual models on the AD vs CN task.
+- The selective inclusion of only helpful teachers is particularly beneficial when:
+  - The dataset is small,
+  - The signal is subtle,
+  - And overfitting is common.
+- This suggests that **bootstrapped and greedy model soups are promising for medical imaging applications**, where reliability and generalization are critical.
+
+---
+
+##  Reproducing Experiments
+
+### 1️ Train Waterbirds Teachers
 ```bash
-conda env create -f environment.yml
-conda activate model_soups
-```
+for s in {1..30}; do
+python3 finetune.py -c cfgs/waterbirds.yaml \
+  --seed $s \
+  --bootstrap True  # or False
+done
 
-To download the datasets see [datasets.md](datasets.md). When required, set `--data-location` to the `$DATA_LOCATION` used in [datasets.md](datasets.md).
-
-### Step 1: Downloading the models
-
-```bash
-python main.py --download-models --model-location <where models will be stored>
-```
-This will store models to `--model-location`.
+---
 
 
-### Step 2: Evaluate individual models
+## Evaluate Model Soup (Uniform / Ordered)
+for s in {1..5}; do
+python3 ensemble.py -c cfgs/waterbirds.yaml \
+  --seed $s \
+  --ensemble_size 30 \
+  --bootstrap True \
+  --soup_selection ordered   # "uniform" for baseline
+done
 
-```bash
-python main.py --eval-individual-models --data-location <where data is stored> --model-location <where models are stored>
-```
-Note that this will first delete then rewrite the file `individual_model_results.jsonl`.
-
-### Step 3: Uniform soup
-
-```bash
-python main.py --uniform-soup --data-location <where data is stored> --model-location <where models are stored>
-```
-Note that this will first delete then rewrite the file `uniform_soup_results.jsonl`.
-
-### Step 4. Greedy soup
-
-```bash
-python main.py --greedy-soup --data-location <where data is stored> --model-location <where models are stored>
-```
-Note that this will first delete then rewrite the file `greedy_soup_results.jsonl`.
-
-### Step 5. Plot
-
-```bash
-python main.py --plot
-```
-Note that this will first delete then rewrite the file `figure.png`.
-
-### Note
-
-If you want, you can all steps with:
-```bash
-python main.py --download-models --eval-individual-models --uniform-soup --greedy-soup --plot --data-location <where data is stored> --model-location <where models are stored>
-```
-
-Also note: if you are interested in running ensemble baselines, check out [the ensemble branch](https://github.com/mlfoundations/model-soups/tree/ensemble).
-
-Also note: if you are interested in running a minial example of [wise-ft](https://arxiv.org/abs/2109.01903), you can run `python wise-ft-example.py --download-models`. 
-
-Also note: if you are interested in running minimal examples of zeroshot/fine-tuning, you can run `python zeroshot.py` or `python finetune.py`. See program arguments (i.e., run with `--help`) for more information. Note that these are minimal examples and do not contain rand-aug, mixup, or LP-FT.
-
-
-
-
-## Citing
-
-If you found this repository useful, please consider citing:
-```bibtex
-@InProceedings{pmlr-v162-wortsman22a,
-  title = 	 {Model soups: averaging weights of multiple fine-tuned models improves accuracy without increasing inference time},
-  author =       {Wortsman, Mitchell and Ilharco, Gabriel and Gadre, Samir Ya and Roelofs, Rebecca and Gontijo-Lopes, Raphael and Morcos, Ari S and Namkoong, Hongseok and Farhadi, Ali and Carmon, Yair and Kornblith, Simon and Schmidt, Ludwig},
-  booktitle = 	 {Proceedings of the 39th International Conference on Machine Learning},
-  pages = 	 {23965--23998},
-  year = 	 {2022},
-  editor = 	 {Chaudhuri, Kamalika and Jegelka, Stefanie and Song, Le and Szepesvari, Csaba and Niu, Gang and Sabato, Sivan},
-  volume = 	 {162},
-  series = 	 {Proceedings of Machine Learning Research},
-  month = 	 {17--23 Jul},
-  publisher =    {PMLR},
-  pdf = 	 {https://proceedings.mlr.press/v162/wortsman22a/wortsman22a.pdf},
-  url = 	 {https://proceedings.mlr.press/v162/wortsman22a.html}
-}
-
-
-```
