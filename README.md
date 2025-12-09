@@ -42,6 +42,38 @@ Performance is evaluated using:
 
 ---
 
+##  ImageNet & Medical Imaging Experiments
+
+### ImageNet + OOD Benchmarks
+Beyond Waterbirds, we also run experiments on **ImageNet** and several **out-of-distribution (OOD) variants**, such as:
+- ImageNet-R (renditions)
+- ImageNet-Sketch
+- ObjectNet
+- Other ImageNet-based OOD splits
+
+For these experiments, we:
+- Train multiple **teacher models** (e.g., ResNet / ViT) on ImageNet.
+- Build **Model Soups** (uniform and ordered/“greedy”) over these teachers.
+- Compare:
+  - Single models vs soups
+  - Bootstrap vs non-bootstrap training
+  - Uniform vs ordered (greedy) selection strategies
+
+The goal is to test whether **bootstrapping + soups** improves **OOD robustness** in a large-scale setting.
+
+### Medical Imaging: AD vs CN Classification
+We also apply model soups to a **binary medical imaging task**:
+- Task: distinguish **Alzheimer’s Disease (AD)** vs **Cognitively Normal (CN)** patients.
+- Setting: multiple independently trained teacher models (with and without bootstrapping).
+- Aggregation: compare **uniform** soups vs **ordered/greedy** soups.
+
+In this domain:
+- Greedy soups are especially useful, as they selectively include only models that **improve validation performance**, which helps avoid overfitting to spurious or noisy patterns.
+- We observe that greedy soups can **outperform both individual models and uniform soups**, especially when signal is subtle and data is limited.
+
+
+---
+
 ##  Teacher Training (Waterbirds)
 We trained 30 ResNet-50 teacher models under two settings:
 
@@ -154,4 +186,22 @@ python3 ensemble.py -c cfgs/waterbirds.yaml \
   --bootstrap True \
   --soup_selection ordered   # "uniform" for baseline
 done
+
+##2️ ImageNet + OOD (Cluster / SLURM Jobs)
+# From the project root
+sbatch slurm/eval_models.slurm
+
+##We use run_bootstrap_array.slurm to build model soups with and without bootstrapping:
+# From the project root
+sbatch slurm/run_bootstrap_array.slurm
+
+##To call ensembles
+python3 ensemble.py \
+  -c cfgs/imagenet.yaml \
+  --seed $SEED \
+  --ensemble_size 30 \
+  --bootstrap $BOOTSTRAP \
+  --soup_selection $SOUP_SELECTION
+
+
 
